@@ -3,6 +3,7 @@ import argparse
 import math
 import multiprocessing as mp
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -92,11 +93,20 @@ def print_gpu_dependency_help() -> None:
     print("GPU stress needs CUDA-enabled PyTorch.")
     if cuda_version:
         print(f"nvidia-smi reports CUDA {cuda_version}.")
-    print("Install it in a project virtual environment:")
-    print("  python3 -m venv .venv")
-    print("  . .venv/bin/activate")
-    print("  python3 -m pip install --upgrade pip")
-    print(f"  python3 -m pip install torch --index-url {index_url}")
+    print("Install it in a project virtual environment.")
+    if shutil.which("uv"):
+        print("This machine has uv, so use:")
+        print("  rm -rf .venv")
+        print("  uv venv .venv")
+        print(f"  uv pip install --python .venv/bin/python torch --index-url {index_url}")
+    else:
+        print("On Debian/Ubuntu, install venv support first if needed:")
+        print("  sudo apt install python3.12-venv")
+        print("  rm -rf .venv")
+        print("  python3 -m venv .venv")
+        print("  . .venv/bin/activate")
+        print("  python3 -m pip install --upgrade pip")
+        print(f"  python3 -m pip install torch --index-url {index_url}")
     print("Then run:")
     print("  .venv/bin/python stress_test.py --target gpu --duration 60")
 

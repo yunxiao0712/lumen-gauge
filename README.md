@@ -33,15 +33,17 @@ CPU load uses local Python worker processes. GPU load uses PyTorch CUDA when ava
 Press `Ctrl+C` to stop early.
 
 If GPU testing reports that PyTorch is missing, install a CUDA wheel that matches
-your driver inside a virtual environment. For a driver that reports CUDA 13.0:
+your driver inside a virtual environment. If `uv` is available, use:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install torch --index-url https://download.pytorch.org/whl/cu130
+rm -rf .venv
+uv venv .venv
+uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cu130
 .venv/bin/python stress_test.py --target gpu --duration 60
 ```
+
+Without `uv`, Debian/Ubuntu may need `sudo apt install python3.12-venv` before
+creating `.venv` with `python3 -m venv .venv`.
 
 ## Requirements
 
