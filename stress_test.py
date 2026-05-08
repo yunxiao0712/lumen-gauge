@@ -92,8 +92,13 @@ def print_gpu_dependency_help() -> None:
     print("GPU stress needs CUDA-enabled PyTorch.")
     if cuda_version:
         print(f"nvidia-smi reports CUDA {cuda_version}.")
-    print("Install it with:")
+    print("Install it in a project virtual environment:")
+    print("  python3 -m venv .venv")
+    print("  . .venv/bin/activate")
+    print("  python3 -m pip install --upgrade pip")
     print(f"  python3 -m pip install torch --index-url {index_url}")
+    print("Then run:")
+    print("  .venv/bin/python stress_test.py --target gpu --duration 60")
 
 
 def detect_cuda_version() -> str | None:

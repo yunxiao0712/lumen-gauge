@@ -33,10 +33,14 @@ CPU load uses local Python worker processes. GPU load uses PyTorch CUDA when ava
 Press `Ctrl+C` to stop early.
 
 If GPU testing reports that PyTorch is missing, install a CUDA wheel that matches
-your driver. For a driver that reports CUDA 13.0:
+your driver inside a virtual environment. For a driver that reports CUDA 13.0:
 
 ```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install --upgrade pip
 python3 -m pip install torch --index-url https://download.pytorch.org/whl/cu130
+.venv/bin/python stress_test.py --target gpu --duration 60
 ```
 
 ## Requirements
