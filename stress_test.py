@@ -4,6 +4,7 @@ import math
 import multiprocessing as mp
 import os
 import signal
+import subprocess
 import time
 
 
@@ -36,7 +37,7 @@ def run_gpu(duration: int, matrix_size: int) -> None:
     try:
         import torch
     except ImportError:
-        print("GPU stress needs PyTorch: python3 -m pip install torch")
+        print_gpu_dependency_help()
         return
 
     if not torch.cuda.is_available():
@@ -75,6 +76,49 @@ def run_gpu(duration: int, matrix_size: int) -> None:
     finally:
         torch.cuda.empty_cache()
         print("GPU stress stopped")
+
+
+def print_gpu_dependency_help() -> None:
+    cuda_version = detect_cuda_version()
+    if cuda_version and cuda_version.startswith("13."):
+        index_url = "https://download.pytorch.org/whl/cu130"
+    elif cuda_version and cuda_version.startswith("12.8"):
+        index_url = "https://download.pytorch.org/whl/cu128"
+    elif cuda_version and cuda_version.startswith("12.6"):
+        index_url = "https://download.pytorch.org/whl/cu126"
+    else:
+        index_url = "https://download.pytorch.org/whl/cu128"
+
+    print("GPU stress needs CUDA-enabled PyTorch.")
+    if cuda_version:
+        print(f"nvidia-smi reports CUDA {cuda_version}.")
+    print("Install it with:")
+    print(f"  python3 -m pip install torch --index-url {index_url}")
+
+
+def detect_cuda_version() -> str | None:
+    try:
+        version_result = subprocess.run(
+            ["nvidia-smi"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    match = re_search_cuda(version_result.stdout)
+    return match
+
+
+def re_search_cuda(text: str) -> str | None:
+    marker = "CUDA Version:"
+    index = text.find(marker)
+    if index == -1:
+        return None
+    value = text[index + len(marker) :].strip().split()[0]
+    return value if value else None
 
 
 def wait_with_progress(duration: int, label: str) -> None:
