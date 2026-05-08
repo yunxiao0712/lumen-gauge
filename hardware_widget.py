@@ -19,7 +19,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 UPDATE_MS = 1000
 AUTO_COLLAPSE_MS = 900
 SNAP_DISTANCE = 10
-EXPANDED_SIZE = (740, 520)
+EXPANDED_SIZE = (740, 540)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
 DISK_PATH = "/"
@@ -340,7 +340,7 @@ class RingMetric(Gtk.EventBox):
         self.image = Gtk.Image()
         self.image.set_size_request(96, 96)
         self.icon_image = Gtk.Image()
-        self.icon_image.set_pixel_size(25)
+        self.icon_image.set_pixel_size(30)
         self.icon_image.set_from_file(str(write_metric_icon_svg(icon)))
         title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         title_row.set_halign(Gtk.Align.CENTER)
@@ -409,7 +409,7 @@ def write_metric_icon_svg(icon: str) -> Path:
     output_dir = Path("/tmp/hardware-monitor-widget-icons")
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{icon}.svg"
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 108 108">
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="10 10 88 88">
   {svg_icon(icon)}
 </svg>
 """
@@ -446,8 +446,8 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
   <circle cx="{cx}" cy="{cy}" r="{radius}" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.14)" stroke-width="9"/>
   <circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" stroke-width="9" stroke-linecap="round"
           stroke-dasharray="{dash:.2f} {gap:.2f}" transform="rotate(-90 {cx} {cy})" filter="url(#glow)"/>
-  <text x="48" y="48" text-anchor="middle" dominant-baseline="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="23" font-weight="700" fill="#f7fbff">{label}</text>
-  <text x="48" y="73" text-anchor="middle" dominant-baseline="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="11" fill="#aebbd0">%</text>
+  <text x="48" y="56" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="23" font-weight="700" fill="#f7fbff">{label}</text>
+  <text x="48" y="77" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="11" fill="#aebbd0">%</text>
 </svg>
 """
     path.write_text(svg)
@@ -508,8 +508,8 @@ class NetworkPanel(Gtk.Box):
         self.title.get_style_context().add_class("section-title")
         self.up_image = Gtk.Image()
         self.down_image = Gtk.Image()
-        self.up_image.set_size_request(150, 86)
-        self.down_image.set_size_request(150, 86)
+        self.up_image.set_size_request(150, 104)
+        self.down_image.set_size_request(150, 104)
         self.up_label = Gtk.Label(label="上传 N/A", xalign=0)
         self.down_label = Gtk.Label(label="下载 N/A", xalign=0)
         self.up_label.get_style_context().add_class("detail")
@@ -530,7 +530,7 @@ class NetworkPanel(Gtk.Box):
 def write_network_chart_svg(name: str, history: list[float], color: str) -> Path:
     path = Path(f"/tmp/hardware-monitor-widget-network-{name}.svg")
     width = 150
-    height = 86
+    height = 104
     padding = 10
     max_value = max(history) if history else 1
     max_value = max(max_value, 1)
@@ -713,10 +713,11 @@ class HardwareWidget(Gtk.Window):
         top_panel.set_hexpand(True)
         top_panel.set_halign(Gtk.Align.FILL)
         hardware_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
-        hardware_panel.set_hexpand(True)
+        hardware_panel.set_size_request(470, -1)
+        hardware_panel.set_halign(Gtk.Align.START)
         hardware_panel.get_style_context().add_class("hardware-panel")
-        top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         top_metrics.set_homogeneous(True)
         bottom_metrics.set_homogeneous(True)
         for key in ("cpu", "gpu", "memory"):
@@ -725,8 +726,8 @@ class HardwareWidget(Gtk.Window):
             bottom_metrics.pack_start(self.rows[key], True, True, 0)
         hardware_panel.pack_start(top_metrics, True, True, 0)
         hardware_panel.pack_start(bottom_metrics, True, True, 0)
-        top_panel.pack_start(hardware_panel, True, True, 0)
-        top_panel.pack_start(self.network_panel, False, True, 0)
+        top_panel.pack_start(hardware_panel, False, False, 0)
+        top_panel.pack_end(self.network_panel, False, False, 0)
 
         temp_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         temp_panel.set_hexpand(True)
