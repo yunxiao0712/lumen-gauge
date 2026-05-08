@@ -19,7 +19,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 UPDATE_MS = 1000
 AUTO_COLLAPSE_MS = 900
 SNAP_DISTANCE = 10
-EXPANDED_SIZE = (760, 430)
+EXPANDED_SIZE = (740, 410)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
 DISK_PATH = "/"
@@ -335,12 +335,12 @@ class RingMetric(Gtk.EventBox):
         self.detail = "N/A"
         self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.connect("button-press-event", self.handle_click)
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         self.add(self.box)
         self.image = Gtk.Image()
-        self.image.set_size_request(102, 102)
+        self.image.set_size_request(96, 96)
         self.icon_image = Gtk.Image()
-        self.icon_image.set_pixel_size(16)
+        self.icon_image.set_pixel_size(21)
         self.icon_image.set_from_file(str(write_metric_icon_svg(icon)))
         title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         title_row.set_halign(Gtk.Align.CENTER)
@@ -360,8 +360,12 @@ class RingMetric(Gtk.EventBox):
         self.percent = percent
         self.value = value
         self.detail = detail or value
+        self.render_metric(percent, value, self.detail, self.pulse)
+
+    def render_metric(self, percent: float | None, value: str, detail: str, pulse: bool = False) -> None:
         self.detail_label.set_text(self.detail)
-        path = write_ring_svg(self.title_text, self.icon, percent, value, self.pulse)
+        self.detail_label.set_text(detail)
+        path = write_ring_svg(self.title_text, self.icon, percent, value, pulse)
         self.image.set_from_file(str(path))
 
     def handle_click(self, _widget, event) -> bool:
@@ -419,19 +423,19 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
     safe_name = f"{icon}_{re.sub(r'[^a-zA-Z0-9_-]+', '_', name)}"
     path = output_dir / f"{safe_name}.svg"
     pct = 0 if percent is None else max(0, min(100, percent))
-    radius = 40
-    cx = cy = 51
+    radius = 38
+    cx = cy = 48
     circumference = 2 * math.pi * radius
     dash = circumference * pct / 100
     gap = circumference - dash
     color = battery_color_for(pct) if icon == "battery" else color_for(pct)
     label = value if value != "N/A" else "--"
     pulse_ring = (
-        f'<circle cx="{cx}" cy="{cy}" r="48" fill="none" stroke="#7dd3fc" stroke-width="2" opacity="0.65"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="45" fill="none" stroke="#7dd3fc" stroke-width="2" opacity="0.65"/>'
         if pulse
         else ""
     )
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="102" height="102" viewBox="0 0 102 102">
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
   <defs>
     <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
       <feGaussianBlur stdDeviation="2.5" result="blur"/>
@@ -442,8 +446,8 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
   <circle cx="{cx}" cy="{cy}" r="{radius}" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.14)" stroke-width="9"/>
   <circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" stroke-width="9" stroke-linecap="round"
           stroke-dasharray="{dash:.2f} {gap:.2f}" transform="rotate(-90 {cx} {cy})" filter="url(#glow)"/>
-  <text x="51" y="50" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="23" font-weight="700" fill="#f7fbff">{label}</text>
-  <text x="51" y="72" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="11" fill="#aebbd0">%</text>
+  <text x="48" y="47" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="23" font-weight="700" fill="#f7fbff">{label}</text>
+  <text x="48" y="69" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="11" fill="#aebbd0">%</text>
 </svg>
 """
     path.write_text(svg)
@@ -504,8 +508,8 @@ class NetworkPanel(Gtk.Box):
         self.title.get_style_context().add_class("section-title")
         self.up_image = Gtk.Image()
         self.down_image = Gtk.Image()
-        self.up_image.set_size_request(150, 78)
-        self.down_image.set_size_request(150, 78)
+        self.up_image.set_size_request(150, 58)
+        self.down_image.set_size_request(150, 58)
         self.up_label = Gtk.Label(label="上传 N/A", xalign=0)
         self.down_label = Gtk.Label(label="下载 N/A", xalign=0)
         self.up_label.get_style_context().add_class("detail")
@@ -526,7 +530,7 @@ class NetworkPanel(Gtk.Box):
 def write_network_chart_svg(name: str, history: list[float], color: str) -> Path:
     path = Path(f"/tmp/hardware-monitor-widget-network-{name}.svg")
     width = 150
-    height = 78
+    height = 58
     padding = 10
     max_value = max(history) if history else 1
     max_value = max(max_value, 1)
@@ -641,6 +645,9 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_source_id: int | None = None
         self.memory_pulse_source_id: int | None = None
         self.memory_pulse_count = 0
+        self.memory_cleanup_start_percent = 0.0
+        self.memory_cleanup_target_percent = 0.0
+        self.memory_cleanup_target_detail = "N/A"
         self.dragging = False
         self.drag_start = (0, 0)
         self.window_start = (0, 0)
@@ -692,17 +699,17 @@ class HardwareWidget(Gtk.Window):
         self.background_image = Gtk.Image()
         self.background_image.set_from_file(str(write_background_svg(*EXPANDED_SIZE)))
         self.root.add(self.background_image)
-        self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        self.content_box.set_border_width(16)
+        self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.content_box.set_border_width(14)
         self.collapsed_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.collapsed_box.set_border_width(0)
         self.collapsed_box.get_style_context().add_class("collapsed")
 
-        top_panel = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-        hardware_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        top_panel = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        hardware_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         hardware_panel.get_style_context().add_class("hardware-panel")
-        top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         top_metrics.set_homogeneous(True)
         bottom_metrics.set_homogeneous(True)
         for key in ("cpu", "gpu", "memory"):
@@ -711,7 +718,7 @@ class HardwareWidget(Gtk.Window):
             bottom_metrics.pack_start(self.rows[key], True, True, 0)
         hardware_panel.pack_start(top_metrics, True, True, 0)
         hardware_panel.pack_start(bottom_metrics, True, True, 0)
-        top_panel.pack_start(hardware_panel, True, True, 0)
+        top_panel.pack_start(hardware_panel, False, False, 0)
         top_panel.pack_start(self.network_panel, False, True, 0)
 
         temp_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -720,7 +727,7 @@ class HardwareWidget(Gtk.Window):
         temp_title.get_style_context().add_class("section-title")
         temp_panel.pack_start(temp_title, False, False, 0)
         temp_panel.pack_start(self.temp_box, True, True, 0)
-        self.content_box.pack_start(top_panel, True, True, 0)
+        self.content_box.pack_start(top_panel, False, False, 0)
         self.content_box.pack_start(temp_panel, False, False, 0)
 
         self.collapsed_box.pack_start(self.collapsed_image, True, True, 0)
@@ -782,7 +789,7 @@ class HardwareWidget(Gtk.Window):
             background: rgba(255, 255, 255, 0.055);
             border: 1px solid rgba(255, 255, 255, 0.11);
             border-radius: 18px;
-            padding: 10px;
+            padding: 8px;
         }
         .net-panel {
             min-width: 166px;
@@ -824,10 +831,13 @@ class HardwareWidget(Gtk.Window):
             GLib.source_remove(self.memory_cleanup_source_id)
         if self.memory_pulse_source_id is not None:
             GLib.source_remove(self.memory_pulse_source_id)
-        self.rows["memory"].set_pulse(True)
-        self.rows["memory"].detail_label.set_text("清理中...")
+        current_percent = self.rows["memory"].percent or 0.0
+        self.memory_cleanup_start_percent = current_percent
+        self.memory_cleanup_target_percent = max(0.0, current_percent - 12.0)
+        self.memory_cleanup_target_detail = self.rows["memory"].detail
+        self.rows["memory"].render_metric(100, "100", "清理中...", True)
         self.memory_pulse_count = 0
-        self.memory_pulse_source_id = GLib.timeout_add(160, self.animate_memory_cleanup)
+        self.memory_pulse_source_id = GLib.timeout_add(90, self.animate_memory_cleanup)
         try:
             subprocess.Popen(
                 [
@@ -840,14 +850,18 @@ class HardwareWidget(Gtk.Window):
             )
         except OSError:
             pass
-        self.memory_cleanup_source_id = GLib.timeout_add(1400, self.finish_memory_cleanup)
+        self.memory_cleanup_source_id = GLib.timeout_add(1200, self.finish_memory_cleanup)
 
     def animate_memory_cleanup(self) -> bool:
         self.memory_pulse_count += 1
-        self.rows["memory"].set_pulse(self.memory_pulse_count % 2 == 0)
-        if self.memory_pulse_count >= 9:
+        if self.memory_pulse_count <= 3:
+            display_percent = 100.0
+        else:
+            step = min(1.0, (self.memory_pulse_count - 3) / 9)
+            display_percent = 100.0 + (self.memory_cleanup_target_percent - 100.0) * step
+        self.rows["memory"].render_metric(display_percent, f"{display_percent:.0f}", "清理中...", True)
+        if self.memory_pulse_count >= 12:
             self.memory_pulse_source_id = None
-            self.rows["memory"].set_pulse(False)
             return False
         return True
 
@@ -1012,7 +1026,12 @@ class HardwareWidget(Gtk.Window):
 
         memory_percent, memory_text = memory_stats()
         memory_value = "N/A" if memory_percent is None else f"{memory_percent:.0f}"
-        self.rows["memory"].set_metric(memory_percent, memory_value, memory_text)
+        if self.memory_cleanup_source_id is None:
+            self.rows["memory"].set_metric(memory_percent, memory_value, memory_text)
+        else:
+            self.memory_cleanup_target_detail = memory_text
+            if memory_percent is not None:
+                self.memory_cleanup_target_percent = memory_percent
 
         disk_percent, disk_text = disk_stats(self.disk_show_available["disk"])
         disk_value = "N/A" if disk_percent is None else f"{disk_percent:.0f}"
