@@ -252,8 +252,16 @@ def temperature_items(gpu_temperature: str | None = None) -> list[tuple[str, flo
         if name not in deduped or (value is not None and (deduped[name] or 0) < value):
             deduped[name] = value
 
-    priority = {"CPU Package": 0, "CPU Core Max": 1, "GPU": 2, "NVMe": 3, "Wi-Fi": 4}
-    return sorted(deduped.items(), key=lambda item: (priority.get(item[0], 20), item[0]))[:10]
+    priority = {
+        "CPU Package": 0,
+        "CPU Core Max": 1,
+        "CPU": 2,
+        "CPU PCI": 3,
+        "GPU": 10,
+        "NVMe": 11,
+        "Wi-Fi": 12,
+    }
+    return sorted(deduped.items(), key=lambda item: (priority.get(item[0], 30), item[0]))[:10]
 
 
 def gpu_stats() -> tuple[float | None, str, str | None]:
@@ -410,7 +418,8 @@ def svg_icon(icon: str) -> str:
         return f'<rect x="24" y="39" width="51" height="30" rx="6" {common}/><circle cx="49" cy="54" r="10" {common}/><path d="M49 44v20M39 54h20" {common}/><path d="M75 48h10v12H75M30 75h13M55 75h13" {common}/>'
     if icon in {"battery", "battery_ac"}:
         bolt = f'<path d="M54 44 45 56h12l-5 10" {common}/>' if icon == "battery_ac" else ""
-        return f'<rect x="24" y="38" width="54" height="32" rx="7" {common}/><path d="M80 48h7v12h-7" {common}/><path d="M40 54h21" {common}/>{bolt}'
+        charge_line = f'<path d="M40 54h21" {common}/>' if icon == "battery_ac" else ""
+        return f'<rect x="24" y="38" width="54" height="32" rx="7" {common}/><path d="M80 48h7v12h-7" {common}/>{charge_line}{bolt}'
     return f'<circle cx="54" cy="54" r="24" {common}/>'
 
 
@@ -466,7 +475,7 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
 class TemperatureBar(Gtk.Box):
     def __init__(self, name: str, temp: float | None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        self.set_size_request(78, -1)
+        self.set_size_request(76, -1)
         self.temp = temp
         self.image = Gtk.Image()
         self.image.set_size_request(28, 70)
@@ -475,6 +484,8 @@ class TemperatureBar(Gtk.Box):
         self.value = Gtk.Label(label="N/A" if temp is None else f"{temp:.0f} C", xalign=0.5)
         self.name.get_style_context().add_class("temp-line")
         self.value.get_style_context().add_class("temp-value")
+        self.name.set_ellipsize(Pango.EllipsizeMode.END)
+        self.name.set_max_width_chars(10)
         self.pack_start(self.image, False, False, 0)
         self.pack_start(self.name, False, False, 0)
         self.pack_start(self.value, False, False, 0)
