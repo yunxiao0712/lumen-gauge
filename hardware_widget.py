@@ -475,7 +475,7 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
 class TemperatureBar(Gtk.Box):
     def __init__(self, name: str, temp: float | None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        self.set_size_request(76, -1)
+        self.set_size_request(68, -1)
         self.temp = temp
         self.image = Gtk.Image()
         self.image.set_size_request(28, 70)
@@ -484,8 +484,11 @@ class TemperatureBar(Gtk.Box):
         self.value = Gtk.Label(label="N/A" if temp is None else f"{temp:.0f} C", xalign=0.5)
         self.name.get_style_context().add_class("temp-line")
         self.value.get_style_context().add_class("temp-value")
-        self.name.set_ellipsize(Pango.EllipsizeMode.END)
-        self.name.set_max_width_chars(10)
+        self.name.set_line_wrap(True)
+        self.name.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.name.set_lines(2)
+        self.name.set_max_width_chars(8)
+        self.name.set_justify(Gtk.Justification.CENTER)
         self.pack_start(self.image, False, False, 0)
         self.pack_start(self.name, False, False, 0)
         self.pack_start(self.value, False, False, 0)
@@ -708,7 +711,7 @@ class HardwareWidget(Gtk.Window):
             "disk_home": RingMetric("home", "主目录", lambda: self.toggle_disk_detail("disk_home")),
             "battery": RingMetric("battery", "电池"),
         }
-        self.temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.temp_box.set_homogeneous(True)
         self.network_panel = NetworkPanel()
         self.network_panel.set_size_request(184, -1)
@@ -748,7 +751,7 @@ class HardwareWidget(Gtk.Window):
         top_panel.pack_start(self.network_panel, False, False, 0)
 
         temp_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        temp_panel.set_size_request(712, -1)
+        temp_panel.set_size_request(694, -1)
         temp_panel.set_halign(Gtk.Align.START)
         temp_panel.get_style_context().add_class("temp-panel")
         temp_title = Gtk.Label(label="温度", xalign=0)
