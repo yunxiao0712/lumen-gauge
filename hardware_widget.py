@@ -487,6 +487,8 @@ class TemperatureBar(Gtk.Box):
         self.image.set_size_request(28, 70)
         self.image.set_from_file(str(write_temperature_svg(name, temp)))
         self.name = Gtk.Label(label=name, xalign=0.5)
+        self.name_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.name_area.set_size_request(-1, 30)
         self.value = Gtk.Label(label="N/A" if temp is None else f"{temp:.0f} C", xalign=0.5)
         self.name.get_style_context().add_class("temp-line")
         self.value.get_style_context().add_class("temp-value")
@@ -495,8 +497,10 @@ class TemperatureBar(Gtk.Box):
         self.name.set_lines(2)
         self.name.set_max_width_chars(8)
         self.name.set_justify(Gtk.Justification.CENTER)
+        self.name.set_valign(Gtk.Align.CENTER)
+        self.name_area.pack_start(self.name, True, True, 0)
         self.pack_start(self.image, False, False, 0)
-        self.pack_start(self.name, False, False, 0)
+        self.pack_start(self.name_area, False, False, 0)
         self.pack_start(self.value, False, False, 0)
 
 
