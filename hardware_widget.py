@@ -126,7 +126,7 @@ def home_disk_stats(show_available: bool = False) -> tuple[float | None, str]:
     return percent, detail
 
 
-def battery_stats() -> tuple[float | None, str]:
+def battery_stats() -> tuple[float | None, str, str]:
     for battery in sorted(Path("/sys/class/power_supply").glob("BAT*")):
         capacity_text = read_text(battery / "capacity")
         status = read_text(battery / "status") or "Unknown"
@@ -141,8 +141,9 @@ def battery_stats() -> tuple[float | None, str]:
             "Not charging": "未充电",
             "Unknown": "未知",
         }
-        return max(0, min(100, capacity)), status_map.get(status, status)
-    return None, "N/A"
+        icon = "battery_ac" if status in {"Charging", "Full", "Not charging"} else "battery"
+        return max(0, min(100, capacity)), status_map.get(status, status), icon
+    return None, "N/A", "battery"
 
 
 def read_net_snapshot() -> NetSnapshot | None:
@@ -362,6 +363,13 @@ class RingMetric(Gtk.EventBox):
         self.detail = detail or value
         self.render_metric(percent, value, self.detail, self.pulse)
 
+    def set_icon(self, icon: str) -> None:
+        if icon == self.icon:
+            return
+        self.icon = icon
+        self.icon_image.set_from_file(str(write_metric_icon_svg(icon)))
+        self.render_metric(self.percent, self.value, self.detail, self.pulse)
+
     def render_metric(self, percent: float | None, value: str, detail: str, pulse: bool = False) -> None:
         self.detail_label.set_text(self.detail)
         self.detail_label.set_text(detail)
@@ -400,8 +408,9 @@ def svg_icon(icon: str) -> str:
         return f'<path d="M25 55 54 31l29 24" {common}/><path d="M33 53v28h42V53" {common}/><path d="M48 81V64h13v17" {common}/>'
     if icon == "gpu":
         return f'<rect x="24" y="39" width="51" height="30" rx="6" {common}/><circle cx="49" cy="54" r="10" {common}/><path d="M49 44v20M39 54h20" {common}/><path d="M75 48h10v12H75M30 75h13M55 75h13" {common}/>'
-    if icon == "battery":
-        return f'<rect x="24" y="38" width="54" height="32" rx="7" {common}/><path d="M80 48h7v12h-7" {common}/><path d="M40 54h21" {common}/><path d="M54 44 45 56h12l-5 10" {common}/>'
+    if icon in {"battery", "battery_ac"}:
+        bolt = f'<path d="M54 44 45 56h12l-5 10" {common}/>' if icon == "battery_ac" else ""
+        return f'<rect x="24" y="38" width="54" height="32" rx="7" {common}/><path d="M80 48h7v12h-7" {common}/><path d="M40 54h21" {common}/>{bolt}'
     return f'<circle cx="54" cy="54" r="24" {common}/>'
 
 
@@ -428,7 +437,7 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
     circumference = 2 * math.pi * radius
     dash = circumference * pct / 100
     gap = circumference - dash
-    color = battery_color_for(pct) if icon == "battery" else color_for(pct)
+    color = battery_color_for(pct) if icon.startswith("battery") else color_for(pct)
     label = value if value != "N/A" else "--"
     pulse_ring = (
         f'<circle cx="{cx}" cy="{cy}" r="45" fill="none" stroke="#7dd3fc" stroke-width="2" opacity="0.65"/>'
@@ -457,6 +466,7 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
 class TemperatureBar(Gtk.Box):
     def __init__(self, name: str, temp: float | None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.set_size_request(78, -1)
         self.temp = temp
         self.image = Gtk.Image()
         self.image.set_size_request(28, 70)
@@ -687,7 +697,7 @@ class HardwareWidget(Gtk.Window):
             "disk_home": RingMetric("home", "主目录", lambda: self.toggle_disk_detail("disk_home")),
             "battery": RingMetric("battery", "电池"),
         }
-        self.temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.temp_box.set_homogeneous(True)
         self.network_panel = NetworkPanel()
         self.network_panel.set_size_request(184, -1)
@@ -710,7 +720,7 @@ class HardwareWidget(Gtk.Window):
         top_panel.set_hexpand(True)
         top_panel.set_halign(Gtk.Align.START)
         hardware_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
-        hardware_panel.set_size_request(470, -1)
+        hardware_panel.set_size_request(520, -1)
         hardware_panel.set_halign(Gtk.Align.START)
         hardware_panel.get_style_context().add_class("hardware-panel")
         top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
@@ -727,7 +737,7 @@ class HardwareWidget(Gtk.Window):
         top_panel.pack_start(self.network_panel, False, False, 0)
 
         temp_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        temp_panel.set_size_request(662, -1)
+        temp_panel.set_size_request(712, -1)
         temp_panel.set_halign(Gtk.Align.START)
         temp_panel.get_style_context().add_class("temp-panel")
         temp_title = Gtk.Label(label="温度", xalign=0)
@@ -1040,7 +1050,7 @@ class HardwareWidget(Gtk.Window):
             label.get_style_context().add_class("temp-line")
             self.temp_box.pack_start(label, False, False, 0)
         for name, temp in items:
-            self.temp_box.pack_start(TemperatureBar(name, temp), False, False, 0)
+            self.temp_box.pack_start(TemperatureBar(name, temp), True, True, 0)
         self.temp_box.show_all()
 
     def refresh(self) -> bool:
@@ -1072,7 +1082,8 @@ class HardwareWidget(Gtk.Window):
         gpu_value = "N/A" if gpu_percent is None else f"{gpu_percent:.0f}"
         self.rows["gpu"].set_metric(gpu_percent, gpu_value, gpu_text)
 
-        battery_percent, battery_text = battery_stats()
+        battery_percent, battery_text, battery_icon = battery_stats()
+        self.rows["battery"].set_icon(battery_icon)
         battery_value = "N/A" if battery_percent is None else f"{battery_percent:.0f}"
         self.rows["battery"].set_metric(battery_percent, battery_value, battery_text)
 
