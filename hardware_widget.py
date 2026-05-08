@@ -19,7 +19,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 UPDATE_MS = 1000
 AUTO_COLLAPSE_MS = 900
 SNAP_DISTANCE = 10
-EXPANDED_SIZE = (740, 480)
+EXPANDED_SIZE = (740, 520)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
 DISK_PATH = "/"
@@ -340,7 +340,7 @@ class RingMetric(Gtk.EventBox):
         self.image = Gtk.Image()
         self.image.set_size_request(96, 96)
         self.icon_image = Gtk.Image()
-        self.icon_image.set_pixel_size(21)
+        self.icon_image.set_pixel_size(25)
         self.icon_image.set_from_file(str(write_metric_icon_svg(icon)))
         title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         title_row.set_halign(Gtk.Align.CENTER)
@@ -446,8 +446,8 @@ def write_ring_svg(name: str, icon: str, percent: float | None, value: str, puls
   <circle cx="{cx}" cy="{cy}" r="{radius}" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.14)" stroke-width="9"/>
   <circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" stroke-width="9" stroke-linecap="round"
           stroke-dasharray="{dash:.2f} {gap:.2f}" transform="rotate(-90 {cx} {cy})" filter="url(#glow)"/>
-  <text x="48" y="47" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="23" font-weight="700" fill="#f7fbff">{label}</text>
-  <text x="48" y="69" text-anchor="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="11" fill="#aebbd0">%</text>
+  <text x="48" y="48" text-anchor="middle" dominant-baseline="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="23" font-weight="700" fill="#f7fbff">{label}</text>
+  <text x="48" y="73" text-anchor="middle" dominant-baseline="middle" font-family="Noto Sans CJK SC, Inter, sans-serif" font-size="11" fill="#aebbd0">%</text>
 </svg>
 """
     path.write_text(svg)
@@ -508,8 +508,8 @@ class NetworkPanel(Gtk.Box):
         self.title.get_style_context().add_class("section-title")
         self.up_image = Gtk.Image()
         self.down_image = Gtk.Image()
-        self.up_image.set_size_request(150, 72)
-        self.down_image.set_size_request(150, 72)
+        self.up_image.set_size_request(150, 86)
+        self.down_image.set_size_request(150, 86)
         self.up_label = Gtk.Label(label="上传 N/A", xalign=0)
         self.down_label = Gtk.Label(label="下载 N/A", xalign=0)
         self.up_label.get_style_context().add_class("detail")
@@ -530,7 +530,7 @@ class NetworkPanel(Gtk.Box):
 def write_network_chart_svg(name: str, history: list[float], color: str) -> Path:
     path = Path(f"/tmp/hardware-monitor-widget-network-{name}.svg")
     width = 150
-    height = 72
+    height = 86
     padding = 10
     max_value = max(history) if history else 1
     max_value = max(max_value, 1)
@@ -710,7 +710,10 @@ class HardwareWidget(Gtk.Window):
         self.content_box.pack_start(title, False, False, 0)
 
         top_panel = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        top_panel.set_hexpand(True)
+        top_panel.set_halign(Gtk.Align.FILL)
         hardware_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
+        hardware_panel.set_hexpand(True)
         hardware_panel.get_style_context().add_class("hardware-panel")
         top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -722,17 +725,19 @@ class HardwareWidget(Gtk.Window):
             bottom_metrics.pack_start(self.rows[key], True, True, 0)
         hardware_panel.pack_start(top_metrics, True, True, 0)
         hardware_panel.pack_start(bottom_metrics, True, True, 0)
-        top_panel.pack_start(hardware_panel, False, False, 0)
+        top_panel.pack_start(hardware_panel, True, True, 0)
         top_panel.pack_start(self.network_panel, False, True, 0)
 
         temp_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        temp_panel.set_hexpand(True)
+        temp_panel.set_halign(Gtk.Align.FILL)
         temp_panel.get_style_context().add_class("temp-panel")
         temp_title = Gtk.Label(label="温度", xalign=0)
         temp_title.get_style_context().add_class("section-title")
         temp_panel.pack_start(temp_title, False, False, 0)
         temp_panel.pack_start(self.temp_box, True, True, 0)
-        self.content_box.pack_start(top_panel, False, False, 0)
-        self.content_box.pack_start(temp_panel, False, False, 0)
+        self.content_box.pack_start(top_panel, False, True, 0)
+        self.content_box.pack_start(temp_panel, False, True, 0)
 
         self.collapsed_box.pack_start(self.collapsed_image, True, True, 0)
         self.root.add_overlay(self.content_box)
@@ -847,7 +852,7 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_current_detail = "清理中..."
         self.rows["memory"].render_metric(current_percent, f"{current_percent:.0f}", self.memory_cleanup_current_detail, True)
         self.memory_pulse_count = 0
-        self.memory_pulse_source_id = GLib.timeout_add(35, self.animate_memory_cleanup)
+        self.memory_pulse_source_id = GLib.timeout_add(25, self.animate_memory_cleanup)
         try:
             subprocess.Popen(
                 [
@@ -864,10 +869,10 @@ class HardwareWidget(Gtk.Window):
 
     def animate_memory_cleanup(self) -> bool:
         self.memory_pulse_count += 1
-        ramp_frames = 12
-        fall_frames = 24
+        ramp_frames = 18
+        fall_frames = 30
         if self.memory_pulse_count <= ramp_frames:
-            progress = self.ease_out_cubic(self.memory_pulse_count / ramp_frames)
+            progress = self.ease_in_out_cubic(self.memory_pulse_count / ramp_frames)
             display_percent = self.memory_cleanup_start_percent + (100.0 - self.memory_cleanup_start_percent) * progress
         else:
             progress = self.ease_in_out_cubic(min(1.0, (self.memory_pulse_count - ramp_frames) / fall_frames))
