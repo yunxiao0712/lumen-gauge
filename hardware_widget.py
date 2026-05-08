@@ -19,12 +19,18 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 UPDATE_MS = 1000
 AUTO_COLLAPSE_MS = 900
 SNAP_DISTANCE = 10
-EXPANDED_SIZE = (740, 540)
+EXPANDED_SIZE = (780, 540)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
 DISK_PATH = "/"
 NET_INTERFACES_EXCLUDE = {"lo"}
 NET_HISTORY_LIMIT = 42
+CONTENT_PADDING = 14
+PANEL_GAP = 8
+NETWORK_PANEL_WIDTH = 184
+CONTENT_WIDTH = EXPANDED_SIZE[0] - CONTENT_PADDING * 2
+HARDWARE_PANEL_WIDTH = CONTENT_WIDTH - NETWORK_PANEL_WIDTH - PANEL_GAP
+METRIC_GAP = 20
 
 
 @dataclass
@@ -714,7 +720,7 @@ class HardwareWidget(Gtk.Window):
         self.temp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.temp_box.set_homogeneous(True)
         self.network_panel = NetworkPanel()
-        self.network_panel.set_size_request(184, -1)
+        self.network_panel.set_size_request(NETWORK_PANEL_WIDTH, -1)
         self.network_panel.set_vexpand(True)
         self.collapsed_image = Gtk.Image()
         self.collapsed_image.set_size_request(*COLLAPSED_SIZE)
@@ -725,20 +731,20 @@ class HardwareWidget(Gtk.Window):
         self.background_image.set_from_file(str(write_background_svg(*EXPANDED_SIZE)))
         self.root.add(self.background_image)
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.content_box.set_border_width(14)
+        self.content_box.set_border_width(CONTENT_PADDING)
         self.collapsed_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.collapsed_box.set_border_width(0)
         self.collapsed_box.get_style_context().add_class("collapsed")
 
-        top_panel = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        top_panel = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=PANEL_GAP)
         top_panel.set_hexpand(True)
         top_panel.set_halign(Gtk.Align.START)
         hardware_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
-        hardware_panel.set_size_request(520, -1)
+        hardware_panel.set_size_request(HARDWARE_PANEL_WIDTH, -1)
         hardware_panel.set_halign(Gtk.Align.START)
         hardware_panel.get_style_context().add_class("hardware-panel")
-        top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
-        bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        top_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=METRIC_GAP)
+        bottom_metrics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=METRIC_GAP)
         top_metrics.set_homogeneous(True)
         bottom_metrics.set_homogeneous(True)
         for key in ("cpu", "gpu", "memory"):
@@ -751,7 +757,7 @@ class HardwareWidget(Gtk.Window):
         top_panel.pack_start(self.network_panel, False, False, 0)
 
         temp_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        temp_panel.set_size_request(694, -1)
+        temp_panel.set_size_request(CONTENT_WIDTH, -1)
         temp_panel.set_halign(Gtk.Align.START)
         temp_panel.get_style_context().add_class("temp-panel")
         temp_title = Gtk.Label(label="温度", xalign=0)
