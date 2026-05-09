@@ -30,6 +30,18 @@ The widget reads local Linux system data from `/proc`, `/sys`, and `nvidia-smi` 
 Right-click the widget and choose `重载` to restart the running process after
 editing code. You can also send `SIGHUP` to the process.
 
+## Memory Cleanup Permission
+
+Linux cache cleanup requires root permission. If polkit keeps dismissing the
+request, install the narrow sudo rule once:
+
+```bash
+sudo ./install_memory_cleanup_sudoers.sh
+```
+
+It allows only this exact command without a password:
+`/usr/bin/tee /proc/sys/vm/drop_caches`.
+
 ## Hardware load test
 
 Use the bounded test script while the widget is open:
@@ -62,4 +74,4 @@ creating `.venv` with `python3 -m venv .venv`.
 - Python 3
 - GTK 3 Python bindings
 - Optional: NVIDIA GPU driver tools for GPU metrics
-- Optional: a polkit authentication agent for memory cache cleanup
+- Optional: sudoers helper or a polkit authentication agent for memory cache cleanup

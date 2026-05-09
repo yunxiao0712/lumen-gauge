@@ -685,7 +685,7 @@ class HardwareWidget(Gtk.Window):
         if os.geteuid() == 0:
             return [tee_path, "/proc/sys/vm/drop_caches"], None
         sudo_path = shutil.which("sudo")
-        if sudo_path and self.sudo_without_password_available(sudo_path):
+        if sudo_path and self.sudo_allows_memory_cleanup(sudo_path, tee_path):
             return [sudo_path, "-n", tee_path, "/proc/sys/vm/drop_caches"], None
         if shutil.which("pkexec") is None:
             return None, "缺少 pkexec"
@@ -693,10 +693,10 @@ class HardwareWidget(Gtk.Window):
             return None, "无授权代理"
         return ["pkexec", tee_path, "/proc/sys/vm/drop_caches"], None
 
-    def sudo_without_password_available(self, sudo_path: str) -> bool:
+    def sudo_allows_memory_cleanup(self, sudo_path: str, tee_path: str) -> bool:
         try:
             result = subprocess.run(
-                [sudo_path, "-n", "true"],
+                [sudo_path, "-n", "-l", tee_path, "/proc/sys/vm/drop_caches"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=0.5,
