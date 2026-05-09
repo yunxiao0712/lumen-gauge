@@ -19,6 +19,12 @@ Lumen Gauge is a lightweight GTK desktop widget for Linux that shows live local 
 
 The widget reads local Linux system data from `/proc`, `/sys`, and `nvidia-smi` when available.
 
+## Project structure
+
+- `hardware_widget.py`: GTK window, layout, interactions, animations
+- `hardware_metrics.py`: local hardware readings and byte formatting
+- `stress_test.py`: bounded CPU/GPU load tests for checking widget readings
+
 ## Hardware load test
 
 Use the bounded test script while the widget is open:

@@ -5,8 +5,6 @@ import math
 import re
 import shutil
 import subprocess
-import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import gi
@@ -15,6 +13,23 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango
 
+from hardware_metrics import (
+    battery_stats,
+    cpu_frequency,
+    cpu_percent,
+    disk_stats,
+    format_bytes,
+    format_bytes_compact,
+    gpu_stats,
+    home_disk_stats,
+    memory_stats,
+    memory_used_bytes,
+    network_rate_values,
+    read_cpu_snapshot,
+    read_net_snapshot,
+    temperature_items,
+)
+
 
 UPDATE_MS = 1000
 AUTO_COLLAPSE_MS = 900
@@ -22,8 +37,6 @@ SNAP_DISTANCE = 10
 EXPANDED_SIZE = (780, 540)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
-DISK_PATH = "/"
-NET_INTERFACES_EXCLUDE = {"lo"}
 NET_HISTORY_LIMIT = 42
 CONTENT_PADDING = 14
 PANEL_GAP = 8
@@ -31,304 +44,6 @@ NETWORK_PANEL_WIDTH = 184
 CONTENT_WIDTH = EXPANDED_SIZE[0] - CONTENT_PADDING * 2
 HARDWARE_PANEL_WIDTH = CONTENT_WIDTH - NETWORK_PANEL_WIDTH - PANEL_GAP
 METRIC_GAP = 20
-
-
-@dataclass
-class CpuSnapshot:
-    total: int
-    idle: int
-
-
-@dataclass
-class NetSnapshot:
-    rx: int
-    tx: int
-    timestamp: float
-
-
-def read_cpu_snapshot() -> CpuSnapshot | None:
-    try:
-        fields = Path("/proc/stat").read_text().splitlines()[0].split()[1:]
-        values = [int(value) for value in fields]
-    except (OSError, IndexError, ValueError):
-        return None
-
-    idle = values[3] + (values[4] if len(values) > 4 else 0)
-    return CpuSnapshot(total=sum(values), idle=idle)
-
-
-def cpu_percent(previous: CpuSnapshot | None, current: CpuSnapshot | None) -> float | None:
-    if previous is None or current is None:
-        return None
-    total_delta = current.total - previous.total
-    idle_delta = current.idle - previous.idle
-    if total_delta <= 0:
-        return None
-    return max(0.0, min(100.0, 100.0 * (1.0 - idle_delta / total_delta)))
-
-
-def cpu_frequency() -> str:
-    paths = sorted(Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_cur_freq"))
-    values = []
-    for path in paths:
-        try:
-            values.append(int(path.read_text().strip()))
-        except (OSError, ValueError):
-            pass
-    if not values:
-        return "N/A"
-    ghz = sum(values) / len(values) / 1_000_000
-    return f"{ghz:.2f} GHz"
-
-
-def memory_stats() -> tuple[float | None, str]:
-    total, available = memory_totals()
-    if not total or available is None:
-        return None, "N/A"
-    used = total - available
-    return 100.0 * used / total, f"{format_bytes_compact(used)}/{format_bytes_compact(total)}"
-
-
-def memory_used_bytes() -> int | None:
-    total, available = memory_totals()
-    if not total or available is None:
-        return None
-    return total - available
-
-
-def memory_totals() -> tuple[int | None, int | None]:
-    data = {}
-    try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            key, value = line.split(":", 1)
-            data[key] = int(value.strip().split()[0]) * 1024
-    except (OSError, ValueError, IndexError):
-        return None, None
-
-    total = data.get("MemTotal")
-    available = data.get("MemAvailable")
-    return total, available
-
-
-def disk_stats(show_available: bool = False) -> tuple[float | None, str]:
-    try:
-        stat = os.statvfs(DISK_PATH)
-    except OSError:
-        return None, "N/A"
-
-    total = stat.f_blocks * stat.f_frsize
-    used = (stat.f_blocks - stat.f_bfree) * stat.f_frsize
-    available = stat.f_bavail * stat.f_frsize
-    if total <= 0:
-        return None, "N/A"
-    percent_base = used + available
-    percent = 100.0 * used / percent_base if percent_base > 0 else 0.0
-    detail = f"可用 {format_bytes_compact(available)}" if show_available else f"{format_bytes_compact(used)} / {format_bytes_compact(total)}"
-    return percent, detail
-
-
-def home_disk_stats(show_available: bool = False) -> tuple[float | None, str]:
-    try:
-        stat = os.statvfs(str(Path.home()))
-    except OSError:
-        return None, "N/A"
-
-    total = stat.f_blocks * stat.f_frsize
-    used = (stat.f_blocks - stat.f_bfree) * stat.f_frsize
-    available = stat.f_bavail * stat.f_frsize
-    if total <= 0:
-        return None, "N/A"
-    percent_base = used + available
-    percent = 100.0 * used / percent_base if percent_base > 0 else 0.0
-    detail = f"可用 {format_bytes_compact(available)}" if show_available else f"{format_bytes_compact(used)} / {format_bytes_compact(total)}"
-    return percent, detail
-
-
-def battery_stats() -> tuple[float | None, str, str]:
-    for battery in sorted(Path("/sys/class/power_supply").glob("BAT*")):
-        capacity_text = read_text(battery / "capacity")
-        status = read_text(battery / "status") or "Unknown"
-        try:
-            capacity = float(capacity_text or "")
-        except ValueError:
-            continue
-        status_map = {
-            "Charging": "充电中",
-            "Discharging": "使用中",
-            "Full": "已充满",
-            "Not charging": "未充电",
-            "Unknown": "未知",
-        }
-        icon = "battery_ac" if status in {"Charging", "Full", "Not charging"} else "battery"
-        return max(0, min(100, capacity)), status_map.get(status, status), icon
-    return None, "N/A", "battery"
-
-
-def read_net_snapshot() -> NetSnapshot | None:
-    rx = 0
-    tx = 0
-    try:
-        for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
-            name, values = line.split(":", 1)
-            iface = name.strip()
-            if iface in NET_INTERFACES_EXCLUDE:
-                continue
-            fields = values.split()
-            rx += int(fields[0])
-            tx += int(fields[8])
-    except (OSError, ValueError, IndexError):
-        return None
-    return NetSnapshot(rx=rx, tx=tx, timestamp=time.monotonic())
-
-
-def network_rate_values(previous: NetSnapshot | None, current: NetSnapshot | None) -> tuple[float | None, float | None]:
-    if previous is None or current is None:
-        return None, None
-    elapsed = current.timestamp - previous.timestamp
-    if elapsed <= 0:
-        return None, None
-    down = max(0, current.rx - previous.rx) / elapsed
-    up = max(0, current.tx - previous.tx) / elapsed
-    return down, up
-
-
-def network_rates(previous: NetSnapshot | None, current: NetSnapshot | None) -> tuple[str, str]:
-    down, up = network_rate_values(previous, current)
-    if down is None or up is None:
-        return "N/A", "N/A"
-    return f"{format_bytes(down)}/s", f"{format_bytes(up)}/s"
-
-
-def read_text(path: Path) -> str | None:
-    try:
-        return path.read_text().strip()
-    except OSError:
-        return None
-
-
-def should_show_temperature(chip: str, label: str) -> bool:
-    text = f"{chip} {label}".lower()
-    return any(key in text for key in ["package", "core", "nvme", "iwlwifi", "wifi", "composite", "sensor"])
-
-
-def friendly_temperature_name(chip: str, label: str) -> str:
-    text = f"{chip} {label}".lower()
-    if "package" in text:
-        return "CPU Package"
-    if chip == "coretemp" and "core" in text:
-        return "CPU Core Max"
-    if "nvme" in text:
-        return "NVMe"
-    if "iwlwifi" in text or "wifi" in text:
-        return "Wi-Fi"
-    return label.replace("_", " ").strip() or chip
-
-
-def friendly_zone_name(label: str) -> str:
-    mapping = {
-        "x86_pkg_temp": "CPU Package",
-        "TCPU": "CPU",
-        "TCPU_PCI": "CPU PCI",
-        "iwlwifi_1": "Wi-Fi",
-    }
-    return mapping.get(label, label.replace("_", " "))
-
-
-def temperature_items(gpu_temperature: str | None = None) -> list[tuple[str, float | None]]:
-    readings: list[tuple[str, float | None]] = []
-
-    for hwmon in sorted(Path("/sys/class/hwmon").glob("hwmon*")):
-        chip = read_text(hwmon / "name") or hwmon.name
-        for temp_input in sorted(hwmon.glob("temp*_input")):
-            try:
-                value = int(temp_input.read_text().strip()) / 1000
-            except (OSError, ValueError):
-                continue
-            if not 0 < value < 130:
-                continue
-            prefix = temp_input.stem.removesuffix("_input")
-            label = read_text(hwmon / f"{prefix}_label") or chip
-            if should_show_temperature(chip, label):
-                readings.append((friendly_temperature_name(chip, label), value))
-
-    for path in sorted(Path("/sys/class/thermal").glob("thermal_zone*/temp")):
-        try:
-            value = int(path.read_text().strip()) / 1000
-        except (OSError, ValueError):
-            continue
-        zone = path.parent
-        label = read_text(zone / "type") or zone.name
-        if 0 < value < 130 and label not in {"acpitz", "INT3400 Thermal"}:
-            readings.append((friendly_zone_name(label), value))
-
-    if gpu_temperature:
-        match = re.search(r"(\d+)\s*C", gpu_temperature)
-        readings.insert(0, ("GPU", float(match.group(1)) if match else None))
-
-    deduped: dict[str, float | None] = {}
-    for name, value in readings:
-        if name not in deduped or (value is not None and (deduped[name] or 0) < value):
-            deduped[name] = value
-
-    priority = {
-        "CPU Package": 0,
-        "CPU Core Max": 1,
-        "CPU": 2,
-        "CPU PCI": 3,
-        "GPU": 10,
-        "NVMe": 11,
-        "Wi-Fi": 12,
-    }
-    return sorted(deduped.items(), key=lambda item: (priority.get(item[0], 30), item[0]))[:10]
-
-
-def gpu_stats() -> tuple[float | None, str, str | None]:
-    if not shutil.which("nvidia-smi"):
-        return None, "N/A", None
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=1.5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None, "N/A", None
-
-    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    match = re.match(r"\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", line)
-    if not match:
-        return None, "N/A", None
-    util, used, total, temp = [int(item) for item in match.groups()]
-    return float(util), f"缓存 {used}/{total}MiB", f"GPU {temp} C"
-
-
-def format_bytes(value: float) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    size = float(value)
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
-            if unit == "B":
-                return f"{size:.0f} {unit}"
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
-
-
-def format_bytes_compact(value: float) -> str:
-    units = ["B", "K", "M", "G", "T"]
-    size = float(value)
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
-            return f"{size:.0f}{unit}" if unit in {"B", "K", "M"} else f"{size:.1f}{unit}"
-        size /= 1024
-    return f"{size:.1f}T"
-
 
 def color_for(percent: float | None) -> str:
     if percent is None:
@@ -687,13 +402,15 @@ class HardwareWidget(Gtk.Window):
         self.down_history: list[float] = []
         self.up_history: list[float] = []
         self.disk_show_available = {"disk": False, "disk_home": False}
-        self.memory_cleanup_source_id: int | None = None
+        self.memory_cleanup_poll_source_id: int | None = None
+        self.memory_cleanup_result_source_id: int | None = None
         self.memory_pulse_source_id: int | None = None
         self.memory_pulse_count = 0
         self.memory_cleanup_start_percent = 0.0
         self.memory_cleanup_target_percent = 0.0
         self.memory_cleanup_target_detail = "N/A"
         self.memory_cleanup_current_detail = "N/A"
+        self.memory_cleanup_result_detail: str | None = None
         self.memory_cleanup_process: subprocess.Popen | None = None
         self.memory_cleanup_before_used: int | None = None
         self.dragging = False
@@ -886,29 +603,42 @@ class HardwareWidget(Gtk.Window):
         self.disk_show_available[key] = not self.disk_show_available[key]
         self.refresh()
 
+    def memory_cleanup_active(self) -> bool:
+        process_running = self.memory_cleanup_process is not None and self.memory_cleanup_process.poll() is None
+        return any(
+            item is not None
+            for item in (
+                self.memory_cleanup_poll_source_id,
+                self.memory_cleanup_result_source_id,
+                self.memory_pulse_source_id,
+                self.memory_cleanup_result_detail,
+            )
+        ) or process_running
+
     def clean_memory(self) -> None:
         if self.memory_cleanup_process is not None and self.memory_cleanup_process.poll() is None:
+            self.rows["memory"].render_metric(
+                self.rows["memory"].percent,
+                self.rows["memory"].value,
+                "清理中...",
+                self.memory_pulse_source_id is not None,
+            )
             return
-        if self.memory_cleanup_source_id is not None:
-            GLib.source_remove(self.memory_cleanup_source_id)
-            self.memory_cleanup_source_id = None
-        if self.memory_pulse_source_id is not None:
-            GLib.source_remove(self.memory_pulse_source_id)
-            self.memory_pulse_source_id = None
+        self.cancel_memory_cleanup_timers()
         current_percent = self.rows["memory"].percent or 0.0
         self.memory_cleanup_before_used = memory_used_bytes()
         self.memory_cleanup_start_percent = current_percent
         self.memory_cleanup_target_percent = max(0.0, current_percent - 12.0)
         self.memory_cleanup_target_detail = self.rows["memory"].detail
         self.memory_cleanup_current_detail = "清理中..."
+        self.memory_cleanup_result_detail = None
         self.rows["memory"].render_metric(current_percent, f"{current_percent:.0f}", self.memory_cleanup_current_detail, True)
         self.memory_pulse_count = 0
         self.memory_pulse_source_id = GLib.timeout_add(25, self.animate_memory_cleanup)
 
         command, error = self.memory_cleanup_command()
         if error:
-            self.memory_cleanup_current_detail = error
-            self.memory_cleanup_source_id = GLib.timeout_add(700, self.finish_memory_cleanup)
+            self.memory_cleanup_result_detail = error
             return
 
         try:
@@ -919,10 +649,19 @@ class HardwareWidget(Gtk.Window):
             )
         except OSError:
             self.memory_cleanup_process = None
-            self.memory_cleanup_current_detail = "清理失败"
-            self.memory_cleanup_source_id = GLib.timeout_add(700, self.finish_memory_cleanup)
+            self.memory_cleanup_result_detail = "清理失败"
             return
-        self.memory_cleanup_source_id = GLib.timeout_add(250, self.poll_memory_cleanup)
+        self.memory_cleanup_poll_source_id = GLib.timeout_add(250, self.poll_memory_cleanup)
+
+    def cancel_memory_cleanup_timers(self) -> None:
+        for attr in ("memory_cleanup_poll_source_id", "memory_cleanup_result_source_id"):
+            source_id = getattr(self, attr)
+            if source_id is not None:
+                GLib.source_remove(source_id)
+                setattr(self, attr, None)
+        if self.memory_pulse_source_id is not None:
+            GLib.source_remove(self.memory_pulse_source_id)
+            self.memory_pulse_source_id = None
 
     def memory_cleanup_command(self) -> tuple[list[str] | None, str | None]:
         command = "sync; echo 3 > /proc/sys/vm/drop_caches"
@@ -934,8 +673,9 @@ class HardwareWidget(Gtk.Window):
 
     def poll_memory_cleanup(self) -> bool:
         if self.memory_cleanup_process is None:
-            self.memory_cleanup_current_detail = "清理失败"
-            self.memory_cleanup_source_id = GLib.timeout_add(500, self.finish_memory_cleanup)
+            self.memory_cleanup_poll_source_id = None
+            self.memory_cleanup_result_detail = "清理失败"
+            self.show_memory_cleanup_result_if_ready()
             return False
 
         return_code = self.memory_cleanup_process.poll()
@@ -943,8 +683,9 @@ class HardwareWidget(Gtk.Window):
             return True
 
         self.memory_cleanup_process = None
-        self.memory_cleanup_current_detail = self.memory_cleanup_result_text(return_code)
-        self.memory_cleanup_source_id = GLib.timeout_add(400, self.finish_memory_cleanup)
+        self.memory_cleanup_poll_source_id = None
+        self.memory_cleanup_result_detail = self.memory_cleanup_result_text(return_code)
+        self.show_memory_cleanup_result_if_ready()
         return False
 
     def memory_cleanup_result_text(self, return_code: int) -> str:
@@ -965,8 +706,8 @@ class HardwareWidget(Gtk.Window):
 
     def animate_memory_cleanup(self) -> bool:
         self.memory_pulse_count += 1
-        ramp_frames = 18
-        fall_frames = 30
+        ramp_frames = 24
+        fall_frames = 40
         if self.memory_pulse_count <= ramp_frames:
             progress = self.ease_in_out_cubic(self.memory_pulse_count / ramp_frames)
             display_percent = self.memory_cleanup_start_percent + (100.0 - self.memory_cleanup_start_percent) * progress
@@ -976,6 +717,7 @@ class HardwareWidget(Gtk.Window):
         self.rows["memory"].render_metric(display_percent, f"{display_percent:.0f}", self.memory_cleanup_current_detail, True)
         if self.memory_pulse_count >= ramp_frames + fall_frames:
             self.memory_pulse_source_id = None
+            self.show_memory_cleanup_result_if_ready()
             return False
         return True
 
@@ -989,21 +731,32 @@ class HardwareWidget(Gtk.Window):
             return 4 * value * value * value
         return 1 - pow(-2 * value + 2, 3) / 2
 
-    def finish_memory_cleanup(self) -> bool:
-        result_detail = self.memory_cleanup_current_detail
+    def show_memory_cleanup_result_if_ready(self) -> None:
         if self.memory_pulse_source_id is not None:
-            GLib.source_remove(self.memory_pulse_source_id)
-            self.memory_pulse_source_id = None
+            return
+        if self.memory_cleanup_process is not None and self.memory_cleanup_process.poll() is None:
+            self.render_memory_cleanup_waiting()
+            return
+        if self.memory_cleanup_result_detail is None:
+            return
+        self.show_memory_cleanup_result(self.memory_cleanup_result_detail)
+
+    def render_memory_cleanup_waiting(self) -> None:
+        memory_percent, _memory_text = memory_stats()
+        memory_value = "N/A" if memory_percent is None else f"{memory_percent:.0f}"
+        self.rows["memory"].render_metric(memory_percent, memory_value, "清理中...", False)
+
+    def show_memory_cleanup_result(self, result_detail: str) -> None:
         memory_percent, memory_text = memory_stats()
         memory_value = "N/A" if memory_percent is None else f"{memory_percent:.0f}"
         self.memory_cleanup_target_detail = memory_text
         self.memory_cleanup_current_detail = result_detail
+        self.memory_cleanup_result_detail = None
         self.rows["memory"].render_metric(memory_percent, memory_value, result_detail, False)
-        self.memory_cleanup_source_id = GLib.timeout_add(2600, self.clear_memory_cleanup_result)
-        return False
+        self.memory_cleanup_result_source_id = GLib.timeout_add(2600, self.clear_memory_cleanup_result)
 
     def clear_memory_cleanup_result(self) -> bool:
-        self.memory_cleanup_source_id = None
+        self.memory_cleanup_result_source_id = None
         self.memory_cleanup_before_used = None
         self.memory_cleanup_current_detail = "N/A"
         self.refresh()
@@ -1161,7 +914,7 @@ class HardwareWidget(Gtk.Window):
 
         memory_percent, memory_text = memory_stats()
         memory_value = "N/A" if memory_percent is None else f"{memory_percent:.0f}"
-        if self.memory_cleanup_source_id is None:
+        if not self.memory_cleanup_active():
             self.rows["memory"].set_metric(memory_percent, memory_value, memory_text)
         else:
             self.memory_cleanup_target_detail = memory_text
