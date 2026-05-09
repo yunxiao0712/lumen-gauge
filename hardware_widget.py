@@ -412,6 +412,7 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_current_detail = "N/A"
         self.memory_cleanup_result_detail: str | None = None
         self.memory_cleanup_process: subprocess.Popen | None = None
+        self.memory_cleanup_needs_auth = False
         self.memory_cleanup_before_used: int | None = None
         self.dragging = False
         self.drag_start = (0, 0)
@@ -630,7 +631,8 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_start_percent = current_percent
         self.memory_cleanup_target_percent = max(0.0, current_percent - 12.0)
         self.memory_cleanup_target_detail = self.rows["memory"].detail
-        self.memory_cleanup_current_detail = "清理中..."
+        self.memory_cleanup_needs_auth = os.geteuid() != 0
+        self.memory_cleanup_current_detail = "等待授权..." if self.memory_cleanup_needs_auth else "清理中..."
         self.memory_cleanup_result_detail = None
         self.rows["memory"].render_metric(current_percent, f"{current_percent:.0f}", self.memory_cleanup_current_detail, True)
         self.memory_pulse_count = 0
@@ -645,7 +647,8 @@ class HardwareWidget(Gtk.Window):
             self.memory_cleanup_process = subprocess.Popen(
                 command,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
             )
         except OSError:
             self.memory_cleanup_process = None
@@ -682,20 +685,34 @@ class HardwareWidget(Gtk.Window):
         if return_code is None:
             return True
 
+        stderr = self.memory_cleanup_stderr()
         self.memory_cleanup_process = None
         self.memory_cleanup_poll_source_id = None
-        self.memory_cleanup_result_detail = self.memory_cleanup_result_text(return_code)
+        self.memory_cleanup_result_detail = self.memory_cleanup_result_text(return_code, stderr)
         self.show_memory_cleanup_result_if_ready()
         return False
 
-    def memory_cleanup_result_text(self, return_code: int) -> str:
+    def memory_cleanup_stderr(self) -> str:
+        if self.memory_cleanup_process is None or self.memory_cleanup_process.stderr is None:
+            return ""
+        try:
+            return self.memory_cleanup_process.stderr.read() or ""
+        except OSError:
+            return ""
+
+    def memory_cleanup_result_text(self, return_code: int, stderr: str = "") -> str:
         if return_code == 0:
             released = self.memory_released_bytes()
             if released is not None and released > 0:
                 return f"释放 {format_bytes_compact(released)}"
             return "已清理"
-        if return_code in {126, 127}:
-            return "权限取消"
+        error_text = stderr.lower()
+        if "no authentication agent" in error_text or "no session for cookie" in error_text:
+            return "无授权代理"
+        if return_code == 126:
+            return "授权取消"
+        if return_code == 127:
+            return "需要授权"
         return "清理失败"
 
     def memory_released_bytes(self) -> int | None:
@@ -758,6 +775,7 @@ class HardwareWidget(Gtk.Window):
     def clear_memory_cleanup_result(self) -> bool:
         self.memory_cleanup_result_source_id = None
         self.memory_cleanup_before_used = None
+        self.memory_cleanup_needs_auth = False
         self.memory_cleanup_current_detail = "N/A"
         self.refresh()
         return False
