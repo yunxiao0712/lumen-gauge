@@ -32,8 +32,8 @@ editing code. You can also send `SIGHUP` to the process.
 
 ## Memory Cleanup Permission
 
-Linux cache cleanup requires root permission. If polkit keeps dismissing the
-request, install the narrow sudo rule once:
+Linux cache cleanup requires root permission. On first launch, Lumen Gauge can
+offer to install a narrow sudo rule for you. You can also install it manually:
 
 ```bash
 sudo ./install_memory_cleanup_sudoers.sh

@@ -40,6 +40,9 @@ EXPANDED_SIZE = (780, 540)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
 MEMORY_CLEANUP_LOG = "/tmp/lumen-gauge-memory-cleanup.log"
+APP_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = Path.home() / ".config" / "lumen-gauge"
+PERMISSION_PROMPT_MARKER = CONFIG_DIR / "memory-cleanup-permission.prompted"
 NET_HISTORY_LIMIT = 42
 CONTENT_PADDING = 14
 PANEL_GAP = 8
@@ -520,6 +523,7 @@ class HardwareWidget(Gtk.Window):
         self.keep_above()
         if hasattr(GLib, "unix_signal_add"):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, self.reload_app)
+        GLib.timeout_add(1200, self.maybe_offer_memory_cleanup_permission)
         GLib.timeout_add(UPDATE_MS, self.refresh)
 
     def configure_transparency(self) -> None:
@@ -609,6 +613,78 @@ class HardwareWidget(Gtk.Window):
     def toggle_disk_detail(self, key: str) -> None:
         self.disk_show_available[key] = not self.disk_show_available[key]
         self.refresh()
+
+    def maybe_offer_memory_cleanup_permission(self) -> bool:
+        if os.geteuid() == 0 or PERMISSION_PROMPT_MARKER.exists():
+            return False
+        tee_path = shutil.which("tee")
+        sudo_path = shutil.which("sudo")
+        if not tee_path or (sudo_path and self.sudo_allows_memory_cleanup(sudo_path, tee_path)):
+            return False
+        helper_path = APP_DIR / "install_memory_cleanup_sudoers.sh"
+        if not helper_path.exists() or shutil.which("pkexec") is None:
+            return False
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="安装内存清理权限？",
+        )
+        dialog.format_secondary_text(
+            "内存缓存清理需要一次管理员授权。安装后，之后点击内存清理不再弹授权窗口。"
+        )
+        dialog.add_button("稍后", Gtk.ResponseType.CANCEL)
+        dialog.add_button("安装", Gtk.ResponseType.OK)
+        response = dialog.run()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK:
+            self.install_memory_cleanup_permission(helper_path)
+        else:
+            self.mark_permission_prompt_seen()
+        return False
+
+    def install_memory_cleanup_permission(self, helper_path: Path) -> None:
+        try:
+            result = subprocess.run(
+                ["pkexec", str(helper_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.show_permission_install_result("权限安装失败", str(exc))
+            return
+
+        if result.returncode == 0:
+            self.show_permission_install_result("权限安装完成", "现在可以直接点击内存清理。")
+            self.mark_permission_prompt_seen()
+            return
+
+        detail = (result.stderr or result.stdout or "授权未完成").strip()
+        self.show_permission_install_result("权限安装失败", detail)
+
+    def show_permission_install_result(self, title: str, detail: str) -> None:
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=title,
+        )
+        dialog.format_secondary_text(detail)
+        dialog.run()
+        dialog.destroy()
+
+    def mark_permission_prompt_seen(self) -> None:
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            PERMISSION_PROMPT_MARKER.write_text("1\n", encoding="utf-8")
+        except OSError:
+            pass
 
     def memory_cleanup_active(self) -> bool:
         process_running = self.memory_cleanup_process is not None and self.memory_cleanup_process.poll() is None
