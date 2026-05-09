@@ -82,20 +82,32 @@ def cpu_frequency() -> str:
 
 
 def memory_stats() -> tuple[float | None, str]:
+    total, available = memory_totals()
+    if not total or available is None:
+        return None, "N/A"
+    used = total - available
+    return 100.0 * used / total, f"{format_bytes_compact(used)}/{format_bytes_compact(total)}"
+
+
+def memory_used_bytes() -> int | None:
+    total, available = memory_totals()
+    if not total or available is None:
+        return None
+    return total - available
+
+
+def memory_totals() -> tuple[int | None, int | None]:
     data = {}
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
             key, value = line.split(":", 1)
             data[key] = int(value.strip().split()[0]) * 1024
     except (OSError, ValueError, IndexError):
-        return None, "N/A"
+        return None, None
 
     total = data.get("MemTotal")
     available = data.get("MemAvailable")
-    if not total or available is None:
-        return None, "N/A"
-    used = total - available
-    return 100.0 * used / total, f"{format_bytes_compact(used)}/{format_bytes_compact(total)}"
+    return total, available
 
 
 def disk_stats(show_available: bool = False) -> tuple[float | None, str]:
@@ -682,6 +694,8 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_target_percent = 0.0
         self.memory_cleanup_target_detail = "N/A"
         self.memory_cleanup_current_detail = "N/A"
+        self.memory_cleanup_process: subprocess.Popen | None = None
+        self.memory_cleanup_before_used: int | None = None
         self.dragging = False
         self.drag_start = (0, 0)
         self.window_start = (0, 0)
@@ -873,11 +887,16 @@ class HardwareWidget(Gtk.Window):
         self.refresh()
 
     def clean_memory(self) -> None:
+        if self.memory_cleanup_process is not None and self.memory_cleanup_process.poll() is None:
+            return
         if self.memory_cleanup_source_id is not None:
             GLib.source_remove(self.memory_cleanup_source_id)
+            self.memory_cleanup_source_id = None
         if self.memory_pulse_source_id is not None:
             GLib.source_remove(self.memory_pulse_source_id)
+            self.memory_pulse_source_id = None
         current_percent = self.rows["memory"].percent or 0.0
+        self.memory_cleanup_before_used = memory_used_bytes()
         self.memory_cleanup_start_percent = current_percent
         self.memory_cleanup_target_percent = max(0.0, current_percent - 12.0)
         self.memory_cleanup_target_detail = self.rows["memory"].detail
@@ -885,19 +904,64 @@ class HardwareWidget(Gtk.Window):
         self.rows["memory"].render_metric(current_percent, f"{current_percent:.0f}", self.memory_cleanup_current_detail, True)
         self.memory_pulse_count = 0
         self.memory_pulse_source_id = GLib.timeout_add(25, self.animate_memory_cleanup)
+
+        command, error = self.memory_cleanup_command()
+        if error:
+            self.memory_cleanup_current_detail = error
+            self.memory_cleanup_source_id = GLib.timeout_add(700, self.finish_memory_cleanup)
+            return
+
         try:
-            subprocess.Popen(
-                [
-                    "sh",
-                    "-c",
-                    "sync; if command -v pkexec >/dev/null 2>&1; then echo 3 | pkexec tee /proc/sys/vm/drop_caches >/dev/null; fi",
-                ],
+            self.memory_cleanup_process = subprocess.Popen(
+                command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
         except OSError:
-            pass
-        self.memory_cleanup_source_id = GLib.timeout_add(1300, self.finish_memory_cleanup)
+            self.memory_cleanup_process = None
+            self.memory_cleanup_current_detail = "清理失败"
+            self.memory_cleanup_source_id = GLib.timeout_add(700, self.finish_memory_cleanup)
+            return
+        self.memory_cleanup_source_id = GLib.timeout_add(250, self.poll_memory_cleanup)
+
+    def memory_cleanup_command(self) -> tuple[list[str] | None, str | None]:
+        command = "sync; echo 3 > /proc/sys/vm/drop_caches"
+        if os.geteuid() == 0:
+            return ["sh", "-c", command], None
+        if shutil.which("pkexec") is None:
+            return None, "缺少 pkexec"
+        return ["pkexec", "sh", "-c", command], None
+
+    def poll_memory_cleanup(self) -> bool:
+        if self.memory_cleanup_process is None:
+            self.memory_cleanup_current_detail = "清理失败"
+            self.memory_cleanup_source_id = GLib.timeout_add(500, self.finish_memory_cleanup)
+            return False
+
+        return_code = self.memory_cleanup_process.poll()
+        if return_code is None:
+            return True
+
+        self.memory_cleanup_process = None
+        self.memory_cleanup_current_detail = self.memory_cleanup_result_text(return_code)
+        self.memory_cleanup_source_id = GLib.timeout_add(400, self.finish_memory_cleanup)
+        return False
+
+    def memory_cleanup_result_text(self, return_code: int) -> str:
+        if return_code == 0:
+            released = self.memory_released_bytes()
+            if released is not None and released > 0:
+                return f"释放 {format_bytes_compact(released)}"
+            return "已清理"
+        if return_code in {126, 127}:
+            return "权限取消"
+        return "清理失败"
+
+    def memory_released_bytes(self) -> int | None:
+        after_used = memory_used_bytes()
+        if self.memory_cleanup_before_used is None or after_used is None:
+            return None
+        return max(0, self.memory_cleanup_before_used - after_used)
 
     def animate_memory_cleanup(self) -> bool:
         self.memory_pulse_count += 1
@@ -926,11 +990,22 @@ class HardwareWidget(Gtk.Window):
         return 1 - pow(-2 * value + 2, 3) / 2
 
     def finish_memory_cleanup(self) -> bool:
-        self.memory_cleanup_source_id = None
+        result_detail = self.memory_cleanup_current_detail
         if self.memory_pulse_source_id is not None:
             GLib.source_remove(self.memory_pulse_source_id)
             self.memory_pulse_source_id = None
-        self.rows["memory"].set_pulse(False)
+        memory_percent, memory_text = memory_stats()
+        memory_value = "N/A" if memory_percent is None else f"{memory_percent:.0f}"
+        self.memory_cleanup_target_detail = memory_text
+        self.memory_cleanup_current_detail = result_detail
+        self.rows["memory"].render_metric(memory_percent, memory_value, result_detail, False)
+        self.memory_cleanup_source_id = GLib.timeout_add(2600, self.clear_memory_cleanup_result)
+        return False
+
+    def clear_memory_cleanup_result(self) -> bool:
+        self.memory_cleanup_source_id = None
+        self.memory_cleanup_before_used = None
+        self.memory_cleanup_current_detail = "N/A"
         self.refresh()
         return False
 
@@ -1090,9 +1165,15 @@ class HardwareWidget(Gtk.Window):
             self.rows["memory"].set_metric(memory_percent, memory_value, memory_text)
         else:
             self.memory_cleanup_target_detail = memory_text
-            self.memory_cleanup_current_detail = "清理中..."
             if memory_percent is not None:
                 self.memory_cleanup_target_percent = memory_percent
+            if self.memory_pulse_source_id is None:
+                self.rows["memory"].render_metric(
+                    memory_percent,
+                    memory_value,
+                    self.memory_cleanup_current_detail,
+                    False,
+                )
 
         disk_percent, disk_text = disk_stats(self.disk_show_available["disk"])
         disk_value = "N/A" if disk_percent is None else f"{disk_percent:.0f}"
