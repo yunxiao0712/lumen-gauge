@@ -3,8 +3,10 @@ import os
 import fcntl
 import math
 import re
+import signal
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import gi
@@ -37,6 +39,7 @@ SNAP_DISTANCE = 10
 EXPANDED_SIZE = (780, 540)
 COLLAPSED_SIZE = (18, 72)
 LOCK_PATH = "/tmp/hardware-monitor-widget.lock"
+MEMORY_CLEANUP_LOG = "/tmp/lumen-gauge-memory-cleanup.log"
 NET_HISTORY_LIMIT = 42
 CONTENT_PADDING = 14
 PANEL_GAP = 8
@@ -515,6 +518,8 @@ class HardwareWidget(Gtk.Window):
         self.show_all()
         self.collapsed_box.hide()
         self.keep_above()
+        if hasattr(GLib, "unix_signal_add"):
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, self.reload_app)
         GLib.timeout_add(UPDATE_MS, self.refresh)
 
     def configure_transparency(self) -> None:
@@ -679,11 +684,26 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_input = "3\n"
         if os.geteuid() == 0:
             return [tee_path, "/proc/sys/vm/drop_caches"], None
+        sudo_path = shutil.which("sudo")
+        if sudo_path and self.sudo_without_password_available(sudo_path):
+            return [sudo_path, "-n", tee_path, "/proc/sys/vm/drop_caches"], None
         if shutil.which("pkexec") is None:
             return None, "缺少 pkexec"
         if not self.has_polkit_auth_agent():
             return None, "无授权代理"
         return ["pkexec", tee_path, "/proc/sys/vm/drop_caches"], None
+
+    def sudo_without_password_available(self, sudo_path: str) -> bool:
+        try:
+            result = subprocess.run(
+                [sudo_path, "-n", "true"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=0.5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
 
     def has_polkit_auth_agent(self) -> bool:
         patterns = (
@@ -720,9 +740,20 @@ class HardwareWidget(Gtk.Window):
         stderr = self.memory_cleanup_stderr()
         self.memory_cleanup_process = None
         self.memory_cleanup_poll_source_id = None
+        self.write_memory_cleanup_log(return_code, stderr)
         self.memory_cleanup_result_detail = self.memory_cleanup_result_text(return_code, stderr)
         self.show_memory_cleanup_result_if_ready()
         return False
+
+    def write_memory_cleanup_log(self, return_code: int, stderr: str) -> None:
+        try:
+            Path(MEMORY_CLEANUP_LOG).write_text(
+                f"return_code={return_code}\n"
+                f"stderr={stderr.strip() or '<empty>'}\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     def memory_cleanup_stderr(self) -> str:
         if self.memory_cleanup_process is None or self.memory_cleanup_process.stderr is None:
@@ -741,8 +772,12 @@ class HardwareWidget(Gtk.Window):
         error_text = stderr.lower()
         if "no authentication agent" in error_text or "no session for cookie" in error_text:
             return "无授权代理"
-        if return_code == 126:
+        if "not authorized" in error_text or "authorization failed" in error_text:
+            return "授权失败"
+        if "dismissed" in error_text or "cancel" in error_text:
             return "授权取消"
+        if return_code == 126:
+            return "授权未完成"
         if return_code == 127:
             return "需要授权"
         return "清理失败"
@@ -822,12 +857,21 @@ class HardwareWidget(Gtk.Window):
             return True
         if event.button == 3:
             menu = Gtk.Menu()
+            reload_item = Gtk.MenuItem(label="重载")
+            reload_item.connect("activate", lambda _item: self.reload_app())
             quit_item = Gtk.MenuItem(label="退出")
             quit_item.connect("activate", lambda _item: Gtk.main_quit())
+            menu.append(reload_item)
             menu.append(quit_item)
             menu.show_all()
             menu.popup_at_pointer(event)
             return True
+        return False
+
+    def reload_app(self) -> bool:
+        self.cancel_collapse()
+        self.cancel_memory_cleanup_timers()
+        os.execv(sys.executable, [sys.executable, *sys.argv])
         return False
 
     def on_button_release(self, _widget, _event) -> bool:

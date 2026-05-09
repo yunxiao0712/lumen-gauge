@@ -25,6 +25,11 @@ The widget reads local Linux system data from `/proc`, `/sys`, and `nvidia-smi` 
 - `hardware_metrics.py`: local hardware readings and byte formatting
 - `stress_test.py`: bounded CPU/GPU load tests for checking widget readings
 
+## Reload
+
+Right-click the widget and choose `重载` to restart the running process after
+editing code. You can also send `SIGHUP` to the process.
+
 ## Hardware load test
 
 Use the bounded test script while the widget is open:
