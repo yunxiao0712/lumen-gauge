@@ -413,6 +413,7 @@ class HardwareWidget(Gtk.Window):
         self.memory_cleanup_result_detail: str | None = None
         self.memory_cleanup_process: subprocess.Popen | None = None
         self.memory_cleanup_needs_auth = False
+        self.memory_cleanup_input = ""
         self.memory_cleanup_before_used: int | None = None
         self.dragging = False
         self.drag_start = (0, 0)
@@ -644,13 +645,18 @@ class HardwareWidget(Gtk.Window):
             return
 
         try:
+            subprocess.run(["sync"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
             self.memory_cleanup_process = subprocess.Popen(
                 command,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
             )
-        except OSError:
+            if self.memory_cleanup_process.stdin is not None:
+                self.memory_cleanup_process.stdin.write(self.memory_cleanup_input)
+                self.memory_cleanup_process.stdin.close()
+        except (OSError, subprocess.SubprocessError):
             self.memory_cleanup_process = None
             self.memory_cleanup_result_detail = "清理失败"
             return
@@ -667,12 +673,38 @@ class HardwareWidget(Gtk.Window):
             self.memory_pulse_source_id = None
 
     def memory_cleanup_command(self) -> tuple[list[str] | None, str | None]:
-        command = "sync; echo 3 > /proc/sys/vm/drop_caches"
+        tee_path = shutil.which("tee")
+        if tee_path is None:
+            return None, "缺少 tee"
+        self.memory_cleanup_input = "3\n"
         if os.geteuid() == 0:
-            return ["sh", "-c", command], None
+            return [tee_path, "/proc/sys/vm/drop_caches"], None
         if shutil.which("pkexec") is None:
             return None, "缺少 pkexec"
-        return ["pkexec", "sh", "-c", command], None
+        if not self.has_polkit_auth_agent():
+            return None, "无授权代理"
+        return ["pkexec", tee_path, "/proc/sys/vm/drop_caches"], None
+
+    def has_polkit_auth_agent(self) -> bool:
+        patterns = (
+            "polkit-gnome-authentication-agent",
+            "polkit-kde-authentication-agent",
+            "lxqt-policykit-agent",
+            "mate-polkit",
+            "xfce-polkit",
+            "gnome-shell",
+        )
+        try:
+            result = subprocess.run(
+                ["pgrep", "-af", "|".join(patterns)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
 
     def poll_memory_cleanup(self) -> bool:
         if self.memory_cleanup_process is None:

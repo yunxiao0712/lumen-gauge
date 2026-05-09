@@ -57,3 +57,4 @@ creating `.venv` with `python3 -m venv .venv`.
 - Python 3
 - GTK 3 Python bindings
 - Optional: NVIDIA GPU driver tools for GPU metrics
+- Optional: a polkit authentication agent for memory cache cleanup
